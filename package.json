@@ -1,0 +1,30 @@
+{
+  "name": "shiyun-config",
+  "version": "1.0.0",
+  "description": "Claude Code 一键配置工具 - 自动配置 API 中转连接",
+  "bin": {
+    "shiyun-config": "./bin/index.js"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "config",
+    "api",
+    "proxy",
+    "shiyun"
+  ],
+  "author": "shiyun",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ]
+}
