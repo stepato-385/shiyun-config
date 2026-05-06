@@ -4,18 +4,20 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const readline = require('readline');
+const { execSync, spawn } = require('child_process');
 
 // ============================================================
-//  shiyun-config - Claude Code 一键配置工具
+//  shiyun-config - Claude Code 一键安装配置工具
 //  中转地址: https://api.nuoda.vip
 // ============================================================
 
 const BASE_URL = 'https://api.nuoda.vip';
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const SETTINGS_FILE = path.join(CLAUDE_DIR, 'settings.json');
+const CLAUDE_PACKAGE = '@anthropic-ai/claude-code';
 
 // 终端颜色
-const colors = {
+const c = {
   reset: '\x1b[0m',
   bold: '\x1b[1m',
   dim: '\x1b[2m',
@@ -26,92 +28,134 @@ const colors = {
   white: '\x1b[37m',
 };
 
-function print(msg) {
-  console.log(msg);
-}
-
-function printLine() {
-  print(colors.dim + '─'.repeat(50) + colors.reset);
-}
+function print(msg) { console.log(msg); }
+function printLine() { print(c.dim + '-'.repeat(50) + c.reset); }
 
 function printHeader() {
   print('');
   printLine();
-  print(colors.bold + '  shiyun-config - Claude Code 配置工具' + colors.reset);
-  print(colors.dim + '  中转地址: ' + BASE_URL + colors.reset);
+  print(c.bold + '  shiyun-config - Claude Code 一键安装配置工具' + c.reset);
+  print(c.dim + '  中转地址: ' + BASE_URL + c.reset);
   printLine();
   print('');
 }
 
-function printSuccess(msg) {
-  print(colors.green + '  [OK] ' + colors.reset + msg);
+function printOK(msg) { print(c.green + '  [OK] ' + c.reset + msg); }
+function printErr(msg) { print(c.red + '  [ERROR] ' + c.reset + msg); }
+function printInfo(msg) { print(c.cyan + '  [INFO] ' + c.reset + msg); }
+function printWait(msg) { process.stdout.write(c.yellow + '  [WAIT] ' + c.reset + msg); }
+
+// 检查命令是否存在
+function commandExists(cmd) {
+  try {
+    if (os.platform() === 'win32') {
+      execSync(`where ${cmd}`, { stdio: 'pipe' });
+    } else {
+      execSync(`which ${cmd}`, { stdio: 'pipe' });
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
-function printError(msg) {
-  print(colors.red + '  [ERROR] ' + colors.reset + msg);
+// 检查 npm 包是否已全局安装
+function isPackageInstalled(pkg) {
+  try {
+    const result = execSync(`npm list -g ${pkg} --depth=0`, { stdio: 'pipe', encoding: 'utf8' });
+    return result.includes(pkg);
+  } catch (e) {
+    return false;
+  }
 }
 
-function printInfo(msg) {
-  print(colors.cyan + '  [INFO] ' + colors.reset + msg);
+// 安装 Claude Code
+function installClaudeCode() {
+  printInfo('正在安装 Claude Code，请稍候...');
+  print(c.dim + '  (首次安装可能需要 1-3 分钟)' + c.reset);
+  print('');
+
+  try {
+    execSync(`npm install -g ${CLAUDE_PACKAGE}`, {
+      stdio: 'inherit',
+      env: { ...process.env },
+    });
+    print('');
+    printOK('Claude Code 安装成功');
+    return true;
+  } catch (e) {
+    print('');
+    printErr('Claude Code 安装失败');
+    printInfo('请尝试手动安装: npm install -g ' + CLAUDE_PACKAGE);
+    if (os.platform() !== 'win32') {
+      printInfo('如果权限不足，请使用: sudo npm install -g ' + CLAUDE_PACKAGE);
+    }
+    return false;
+  }
 }
 
 // 读取现有配置
 function readSettings() {
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
-      const content = fs.readFileSync(SETTINGS_FILE, 'utf8');
-      return JSON.parse(content);
+      return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
     }
-  } catch (e) {
-    // 文件不存在或解析失败，返回空对象
-  }
+  } catch (e) {}
   return {};
 }
 
 // 写入配置
 function writeSettings(settings) {
-  // 确保目录存在
   if (!fs.existsSync(CLAUDE_DIR)) {
     fs.mkdirSync(CLAUDE_DIR, { recursive: true });
   }
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
 }
 
-// 创建 readline 接口
-function createInterface() {
-  return readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+// 遮蔽 Key
+function maskKey(key) {
+  if (!key || key.length < 8) return '***';
+  return key.substring(0, 6) + '...' + key.substring(key.length - 4);
 }
 
-// 提问
+// 验证 Key
+function validateKey(key) {
+  return key && key.length >= 10;
+}
+
+// 创建 readline
+function createRL() {
+  return readline.createInterface({ input: process.stdin, output: process.stdout });
+}
+
 function ask(rl, question) {
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      resolve(answer.trim());
-    });
-  });
+  return new Promise((r) => rl.question(question, (a) => r(a.trim())));
 }
 
-// 验证 API Key 格式
-function validateApiKey(key) {
-  if (!key || key.length < 10) {
+// 应用配置
+function applyConfig(apiKey) {
+  try {
+    const settings = readSettings();
+    if (!settings.env) settings.env = {};
+    settings.env.ANTHROPIC_BASE_URL = BASE_URL;
+    settings.env.ANTHROPIC_API_KEY = apiKey;
+    writeSettings(settings);
+    return true;
+  } catch (e) {
+    printErr('配置写入失败: ' + e.message);
     return false;
   }
-  return true;
 }
 
 // 主流程
 async function main() {
   printHeader();
 
-  // 检查是否带参数运行
   const args = process.argv.slice(2);
 
   if (args.includes('--help') || args.includes('-h')) {
     print('  用法:');
-    print('    shiyun-config              交互式配置');
+    print('    shiyun-config              交互式安装并配置');
     print('    shiyun-config --key <KEY>  直接设置 API Key');
     print('    shiyun-config --status     查看当前配置状态');
     print('    shiyun-config --reset      重置配置');
@@ -129,95 +173,102 @@ async function main() {
     process.exit(0);
   }
 
-  // 直接传入 key
-  const keyIndex = args.indexOf('--key');
-  if (keyIndex !== -1 && args[keyIndex + 1]) {
-    const apiKey = args[keyIndex + 1];
-    if (!validateApiKey(apiKey)) {
-      printError('API Key 格式无效，请检查后重试');
+  // === 第一步：检查并安装 Claude Code ===
+  printInfo('第一步: 检查 Claude Code 安装状态...');
+  print('');
+
+  if (isPackageInstalled(CLAUDE_PACKAGE)) {
+    printOK('Claude Code 已安装');
+    // 获取版本
+    try {
+      const ver = execSync('claude --version', { stdio: 'pipe', encoding: 'utf8' }).trim();
+      print(c.dim + '  版本: ' + ver + c.reset);
+    } catch (e) {}
+  } else {
+    printInfo('未检测到 Claude Code，开始自动安装...');
+    print('');
+    const installed = installClaudeCode();
+    if (!installed) {
       process.exit(1);
     }
-    applyConfig(apiKey);
-    process.exit(0);
   }
 
-  // 交互式配置
-  const rl = createInterface();
+  print('');
 
-  printInfo('本工具将自动配置 Claude Code 连接到中转 API');
+  // === 第二步：配置 API Key ===
+  printInfo('第二步: 配置 API 连接...');
   print('');
 
   let apiKey = '';
 
-  while (!validateApiKey(apiKey)) {
-    apiKey = await ask(rl, colors.white + '  请输入您的 API Key: ' + colors.reset);
-    if (!validateApiKey(apiKey)) {
-      printError('API Key 不能为空且长度不能少于 10 位，请重新输入');
-    }
+  // 检查是否通过参数传入
+  const keyIndex = args.indexOf('--key');
+  if (keyIndex !== -1 && args[keyIndex + 1]) {
+    apiKey = args[keyIndex + 1];
   }
 
-  print('');
-  applyConfig(apiKey);
-
-  rl.close();
-}
-
-// 应用配置
-function applyConfig(apiKey) {
-  try {
-    const settings = readSettings();
-
-    // 确保 env 字段存在
-    if (!settings.env) {
-      settings.env = {};
+  if (!validateKey(apiKey)) {
+    const rl = createRL();
+    while (!validateKey(apiKey)) {
+      apiKey = await ask(rl, c.white + '  请输入您的 API Key: ' + c.reset);
+      if (!validateKey(apiKey)) {
+        printErr('Key 格式不正确，请重新输入');
+      }
     }
+    rl.close();
+  }
 
-    // 设置中转地址和 API Key
-    settings.env.ANTHROPIC_BASE_URL = BASE_URL;
-    settings.env.ANTHROPIC_API_KEY = apiKey;
-
-    // 写入配置文件
-    writeSettings(settings);
-
-    printSuccess('配置写入成功');
-    print('');
-    printLine();
-    print(colors.bold + '  配置详情:' + colors.reset);
-    print('  API 地址: ' + colors.cyan + BASE_URL + colors.reset);
-    print('  API Key:  ' + colors.cyan + maskKey(apiKey) + colors.reset);
-    print('  配置文件: ' + colors.dim + SETTINGS_FILE + colors.reset);
-    printLine();
-    print('');
-    printInfo('配置完成，请重启 Claude Code 使配置生效');
-    print('  启动命令: ' + colors.bold + 'claude' + colors.reset);
-    print('');
-  } catch (e) {
-    printError('配置写入失败: ' + e.message);
-    print('');
-    printInfo('请检查目录权限: ' + CLAUDE_DIR);
+  // 写入配置
+  if (!applyConfig(apiKey)) {
     process.exit(1);
   }
+
+  // === 完成 ===
+  print('');
+  printLine();
+  print(c.bold + c.green + '  配置完成!' + c.reset);
+  printLine();
+  print('  API 地址: ' + c.cyan + BASE_URL + c.reset);
+  print('  API Key:  ' + c.cyan + maskKey(apiKey) + c.reset);
+  print('  配置文件: ' + c.dim + SETTINGS_FILE + c.reset);
+  printLine();
+  print('');
+  printInfo('现在可以启动 Claude Code:');
+  print('');
+  print('  ' + c.bold + 'claude' + c.reset);
+  print('');
 }
 
 // 显示状态
 function showStatus() {
   const settings = readSettings();
-  print('  当前配置状态:');
+  const installed = isPackageInstalled(CLAUDE_PACKAGE);
+
+  print('  当前状态:');
   print('');
 
-  if (settings.env && settings.env.ANTHROPIC_BASE_URL) {
-    printSuccess('API 地址: ' + settings.env.ANTHROPIC_BASE_URL);
+  if (installed) {
+    printOK('Claude Code: 已安装');
+    try {
+      const ver = execSync('claude --version', { stdio: 'pipe', encoding: 'utf8' }).trim();
+      print(c.dim + '       版本: ' + ver + c.reset);
+    } catch (e) {}
   } else {
-    printInfo('API 地址: 未配置（使用默认）');
+    printInfo('Claude Code: 未安装');
+  }
+
+  if (settings.env && settings.env.ANTHROPIC_BASE_URL) {
+    printOK('API 地址: ' + settings.env.ANTHROPIC_BASE_URL);
+  } else {
+    printInfo('API 地址: 未配置');
   }
 
   if (settings.env && settings.env.ANTHROPIC_API_KEY) {
-    printSuccess('API Key:  ' + maskKey(settings.env.ANTHROPIC_API_KEY));
+    printOK('API Key:  ' + maskKey(settings.env.ANTHROPIC_API_KEY));
   } else {
     printInfo('API Key:  未配置');
   }
 
-  print('  配置文件: ' + colors.dim + SETTINGS_FILE + colors.reset);
   print('');
 }
 
@@ -225,34 +276,21 @@ function showStatus() {
 function resetConfig() {
   try {
     const settings = readSettings();
-
     if (settings.env) {
       delete settings.env.ANTHROPIC_BASE_URL;
       delete settings.env.ANTHROPIC_API_KEY;
-
-      // 如果 env 为空则删除
-      if (Object.keys(settings.env).length === 0) {
-        delete settings.env;
-      }
+      if (Object.keys(settings.env).length === 0) delete settings.env;
     }
-
     writeSettings(settings);
-    printSuccess('配置已重置，Claude Code 将使用默认设置');
+    printOK('配置已重置');
     print('');
   } catch (e) {
-    printError('重置失败: ' + e.message);
+    printErr('重置失败: ' + e.message);
     process.exit(1);
   }
 }
 
-// 遮蔽 Key 显示
-function maskKey(key) {
-  if (!key || key.length < 8) return '***';
-  return key.substring(0, 6) + '...' + key.substring(key.length - 4);
-}
-
-// 运行
 main().catch((e) => {
-  printError('运行出错: ' + e.message);
+  printErr('运行出错: ' + e.message);
   process.exit(1);
 });
